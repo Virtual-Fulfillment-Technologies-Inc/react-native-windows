@@ -1098,6 +1098,20 @@ void CompositionEventHandler::onPointerCaptureLost(
 
     for (auto pointerId : capturedPointers) {
       releasePointerCapture(pointerId, m_pointerCapturingComponentTag);
+
+      // Cancel any active touch for this pointer so React Native is notified that
+      // the touch ended. Without this, m_activeTouches retains a zombie entry and
+      // RN JS is never told the touch is gone — leaving Pressables stuck in a
+      // pressed state after a system-interrupted gesture (e.g. system back swipe,
+      // Alt+Tab, another window coming foreground).
+      auto activeTouch = m_activeTouches.find(pointerId);
+      if (activeTouch != m_activeTouches.end()) {
+        ActiveTouch cancelledTouchCopy = std::move(activeTouch->second);
+        m_activeTouches.erase(activeTouch);
+        if (cancelledTouchCopy.eventEmitter) {
+          DispatchSynthesizedTouchCancelForActiveTouch(cancelledTouchCopy, pointerPoint, keyModifiers);
+        }
+      }
     }
 
     m_pointerCapturingComponentTag = -1;
