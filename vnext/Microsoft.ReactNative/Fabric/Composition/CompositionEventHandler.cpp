@@ -1231,7 +1231,9 @@ int CompositionEventHandler::AllocateTouchIdentifier() noexcept {
     }
   }
   // All 20 slots occupied (> 20 simultaneous touch points) — wrap anyway.
-  return m_touchId++ % kMaxTouchIdentifier;
+  int fallback = m_touchId % kMaxTouchIdentifier;
+  m_touchId = (m_touchId + 1) % kMaxTouchIdentifier;
+  return fallback;
 }
 
 void CompositionEventHandler::onPointerPressed(
