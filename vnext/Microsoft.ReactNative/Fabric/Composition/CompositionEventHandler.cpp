@@ -1092,7 +1092,7 @@ void CompositionEventHandler::onPointerCaptureLost(
   if (SurfaceId() == -1)
     return;
 
-  if (m_pointerCapturingComponentTag) {
+  if (m_pointerCapturingComponentTag != -1) {
     // copy array to avoid iterator being invalidated during deletion
     std::unordered_set<PointerId> capturedPointers = m_capturedPointers;
 
