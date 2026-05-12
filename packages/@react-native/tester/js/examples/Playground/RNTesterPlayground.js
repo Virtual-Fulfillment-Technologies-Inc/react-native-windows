@@ -10,23 +10,343 @@
 
 import type {RNTesterModuleExample} from '../../types/RNTesterTypes';
 
-import RNTesterText from '../../components/RNTesterText';
 import * as React from 'react';
-import {StyleSheet, View} from 'react-native';
+import {
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-function Playground() {
-  return (
-    <View style={styles.container}>
-      <RNTesterText>
-        Edit "RNTesterPlayground.js" to change this file
-      </RNTesterText>
-    </View>
-  );
+function wait(timeout: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, timeout);
+  });
+}
+
+type PlaygroundState = {
+  horizontalValue: boolean,
+  snapToStartValue: boolean,
+  snapToEndValue: boolean,
+  zoomValue: boolean,
+  alignToStartValue: boolean,
+  refreshing: boolean,
+  keyboardDismiss: boolean,
+  snapToOffsets: boolean,
+  pagingEnabled: boolean,
+  showsHorizontalScrollIndicatorValue: boolean,
+  showsVerticalScrollIndicatorValue: boolean,
+};
+
+class Playground extends React.Component<{||}, PlaygroundState> {
+  state: PlaygroundState = {
+    horizontalValue: true,
+    snapToStartValue: false,
+    snapToEndValue: false,
+    zoomValue: false,
+    alignToStartValue: true,
+    refreshing: false,
+    keyboardDismiss: false,
+    snapToOffsets: true,
+    pagingEnabled: false,
+    showsHorizontalScrollIndicatorValue: true,
+    showsVerticalScrollIndicatorValue: false,
+  };
+
+  toggleSwitch1 = (value: boolean) => {
+    this.setState({horizontalValue: value});
+  };
+
+  toggleSwitch2 = (value: boolean) => {
+    this.setState({snapToStartValue: value});
+  };
+
+  toggleSwitch3 = (value: boolean) => {
+    this.setState({snapToEndValue: value});
+  };
+
+  toggleSwitch4 = (value: boolean) => {
+    this.setState({zoomValue: value});
+  };
+
+  toggleSwitch5 = (value: boolean) => {
+    this.setState({alignToStartValue: value});
+  };
+
+  toggleSwitch6 = (value: boolean) => {
+    this.setState({snapToOffsets: value});
+  };
+
+  toggleSwitch7 = (value: boolean) => {
+    this.setState({pagingEnabled: value});
+  };
+
+  toggleSwitch8 = (value: boolean) => {
+    this.setState({keyboardDismiss: value});
+  };
+
+  toggleSwitch9 = (value: boolean) => {
+    this.setState({showsHorizontalScrollIndicatorValue: value});
+  };
+
+  toggleSwitch10 = (value: boolean) => {
+    this.setState({showsVerticalScrollIndicatorValue: value});
+  };
+
+  onRefresh = () => {
+    this.setState({refreshing: true});
+    void wait(2000).then(() => this.setState({refreshing: false}));
+  };
+
+  makeItems(nItems: number, itemStyles: mixed): Array<React.Node> {
+    const items = [];
+    for (let i = 0; i < nItems; i++) {
+      items[i] = (
+        <TouchableOpacity key={i} style={itemStyles}>
+          <Text>{'Item ' + i}</Text>
+        </TouchableOpacity>
+      );
+    }
+    return items;
+  }
+
+  render(): React.Node {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignSelf: 'auto',
+          flexDirection: 'column',
+          justifyContent: 'flex-start',
+        }}>
+        <View style={{flex: 0.2, alignSelf: 'center', flexDirection: 'row'}}>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {this.state.horizontalValue ? 'Horizontal ' : 'Vertical '}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch1}
+              value={this.state.horizontalValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {' '}
+              {this.state.showsHorizontalScrollIndicatorValue
+                ? 'Show Horizontal Indicator'
+                : 'Hide Horizontal Indicator'}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch9}
+              value={this.state.showsHorizontalScrollIndicatorValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {' '}
+              {this.state.showsVerticalScrollIndicatorValue
+                ? 'Show Vertical Indicator'
+                : 'Hide Vertical Indicator'}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch10}
+              value={this.state.showsVerticalScrollIndicatorValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {this.state.snapToStartValue
+                ? 'SnapToStart On '
+                : 'SnapToStart Off '}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch2}
+              value={this.state.snapToStartValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {this.state.snapToEndValue ? 'SnapToEnd On ' : 'SnapToEnd Off '}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch3}
+              value={this.state.snapToEndValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {this.state.zoomValue ? 'Zoom 2.0 on ' : 'Zoom 2.0 Off '}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch4}
+              value={this.state.zoomValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {this.state.alignToStartValue ? 'AlignToStart' : 'AlignToEnd'}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch5}
+              value={this.state.alignToStartValue}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>
+              {this.state.snapToOffsets
+                ? 'SnapToOffsets[100,500]'
+                : 'SnapToOffsets[null]'}
+            </Text>
+            <Switch
+              onValueChange={this.toggleSwitch6}
+              value={this.state.snapToOffsets}
+            />
+          </View>
+          <View
+            style={{
+              flexDirection: 'column',
+              alignSelf: 'stretch',
+              justifyContent: 'center',
+              padding: 20,
+            }}>
+            <Text>{'PagingEnabled'}</Text>
+            <Switch
+              onValueChange={this.toggleSwitch7}
+              value={this.state.pagingEnabled}
+            />
+          </View>
+        </View>
+        <View style={{flex: 0.8, alignSelf: 'center', flexDirection: 'column'}}>
+          <ScrollView
+            style={
+              this.state.horizontalValue
+                ? styles.horizontalScrollViewStyle
+                : styles.verticalScrollViewStyle
+            }
+            refreshControl={
+              <RefreshControl
+                refreshing={this.state.refreshing}
+                onRefresh={this.onRefresh}
+              />
+            }
+            keyboardDismissMode={
+              this.state.keyboardDismiss ? 'on-drag' : 'none'
+            }
+            snapToOffsets={
+              this.state.snapToOffsets ? [100.0, 500.0] : undefined
+            }
+            pagingEnabled={this.state.pagingEnabled}
+            minimumZoomScale={0.1}
+            maximumZoomScale={2.0}
+            zoomScale={this.state.zoomValue ? 2.0 : 1.0}
+            snapToStart={this.state.snapToStartValue}
+            snapToEnd={this.state.snapToEndValue}
+            snapToAlignment={this.state.alignToStartValue ? 'start' : 'end'}
+            horizontal={this.state.horizontalValue}
+            showsHorizontalScrollIndicator={
+              this.state.showsHorizontalScrollIndicatorValue
+            }
+            showsVerticalScrollIndicator={
+              this.state.showsVerticalScrollIndicatorValue
+            }
+            onScrollBeginDrag={() => {
+              console.log('onScrollBeginDrag');
+            }}
+            onScrollEndDrag={() => {
+              console.log('onScrollEndDrag');
+            }}
+            onMomentumScrollBegin={() => {
+              console.log('onMomentumScrollBegin');
+            }}
+            onMomentumScrollEnd={() => {
+              console.log('onMomentumScrollEnd');
+            }}
+            onScroll={() => {
+              console.log('onScroll');
+            }}
+            decelerationRate={0.95}
+            scrollEventThrottle={50}>
+            {this.makeItems(20, [styles.itemWrapper])}
+          </ScrollView>
+        </View>
+      </View>
+    );
+  }
 }
 
 const styles = StyleSheet.create({
-  container: {
+  horizontalScrollViewStyle: {
     padding: 10,
+    width: 500,
+    height: 120,
+  },
+  verticalScrollViewStyle: {
+    padding: 10,
+    width: 120,
+    height: 500,
+  },
+  itemWrapper: {
+    backgroundColor: '#dddddd',
+    alignItems: 'center',
+    borderRadius: 5,
+    borderWidth: 5,
+    borderColor: '#a52a2a',
+    padding: 10,
+    margin: 5,
+    width: 90,
+    height: 90,
   },
 });
 
