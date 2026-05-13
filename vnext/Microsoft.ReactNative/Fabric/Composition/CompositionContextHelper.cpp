@@ -762,12 +762,6 @@ struct CompScrollerVisual : winrt::implements<
     void InertiaStateEntered(
         typename TTypeRedirects::InteractionTracker sender,
         typename TTypeRedirects::InteractionTrackerInertiaStateEnteredArgs args) noexcept {
-      RNW_TOUCH_TRACE(
-          "InteractionTracker::InertiaStateEntered requestId=%d wasInteracting=%d naturalRest=(%.1f,%.1f)",
-          args.RequestId(),
-          m_outer->m_interacting ? 1 : 0,
-          args.NaturalRestingPosition().x,
-          args.NaturalRestingPosition().y);
       m_outer->m_custom = false;
       m_outer->m_inertia = true;
       m_outer->m_currentPosition = args.NaturalRestingPosition();
@@ -788,12 +782,6 @@ struct CompScrollerVisual : winrt::implements<
     void InteractingStateEntered(
         typename TTypeRedirects::InteractionTracker sender,
         typename TTypeRedirects::InteractionTrackerInteractingStateEnteredArgs args) noexcept {
-      RNW_TOUCH_TRACE(
-          "InteractionTracker::InteractingStateEntered requestId=%d pos=(%.1f,%.1f) redirectedPointerId=%d (touch claimed by tracker)",
-          args.RequestId(),
-          sender.Position().x,
-          sender.Position().y,
-          m_outer->m_redirectedPointerId);
       // Mark that we're now interacting and remember the requestId (user manipulations => 0)
       m_outer->m_interacting = true;
 
