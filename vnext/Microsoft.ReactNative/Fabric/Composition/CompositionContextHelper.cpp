@@ -853,36 +853,18 @@ struct CompScrollerVisual : winrt::implements<
       const winrt::Microsoft::ReactNative::Composition::Input::PointerRoutedEventArgs &args) noexcept {
     if constexpr (std::is_same_v<TTypeRedirects, MicrosoftTypeRedirects>) {
       auto pointerDeviceType = args.Pointer().PointerDeviceType();
-      RNW_TOUCH_TRACE(
-          "CompScrollerVisual::OnPointerPressed (Microsoft) pointerId=%d deviceType=%d scrollEnabled=%d horizontal=%d",
-          static_cast<int>(args.Pointer().PointerId()),
-          static_cast<int>(pointerDeviceType),
-          m_isScrollEnabled ? 1 : 0,
-          m_horizontal ? 1 : 0);
       if (pointerDeviceType == winrt::Microsoft::ReactNative::Composition::Input::PointerDeviceType::Touch) {
-        RNW_TOUCH_TRACE(
-            "CompScrollerVisual::OnPointerPressed calling TryRedirectForManipulation pointerId=%d",
-            static_cast<int>(args.Pointer().PointerId()));
-        // Remember which pointerId we asked the InteractionTracker to manipulate. If
-        // the tracker actually claims the gesture (InteractingStateEntered), we'll
-        // surface this id so RN can synthesize a touch-cancel — the OS does not
-        // reliably deliver PointerCaptureLost or PointerReleased for the
-        // redirected pointer (issue #16047). Multi-finger panning would clobber
-        // this single-slot id; the common case is one finger, and the worst-case
-        // for multi-touch is no-op (the second touch's cancel would still be
-        // missed, matching pre-fix behavior).
+        // Issue #16047: remember which pointerId we asked the InteractionTracker
+        // to manipulate. If the tracker actually claims the gesture
+        // (InteractingStateEntered), we'll surface this id so RN can synthesize a
+        // touch-cancel — the OS does not reliably deliver PointerCaptureLost or
+        // PointerReleased for the redirected pointer. Multi-finger panning would
+        // clobber this single-slot id; the common case is one finger, and the
+        // worst-case for multi-touch matches the pre-fix behavior (the second
+        // touch's cancel would still be missed).
         m_redirectedPointerId = static_cast<int32_t>(args.Pointer().PointerId());
         m_visualInteractionSource.TryRedirectForManipulation(args.GetCurrentPoint(args.OriginalSource()).Inner());
-        RNW_TOUCH_TRACE(
-            "CompScrollerVisual::OnPointerPressed TryRedirectForManipulation returned (void) pointerId=%d redirectedPointerId=%d",
-            static_cast<int>(args.Pointer().PointerId()),
-            m_redirectedPointerId);
       }
-    } else {
-      RNW_TOUCH_TRACE(
-          "CompScrollerVisual::OnPointerPressed (Windows/system) pointerId=%d deviceType=%d (no TryRedirectForManipulation)",
-          static_cast<int>(args.Pointer().PointerId()),
-          static_cast<int>(args.Pointer().PointerDeviceType()));
     }
   }
 

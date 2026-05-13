@@ -25,7 +25,6 @@
 #include "JSValueReader.h"
 #include "ReactNativeIsland.h"
 #include "RootComponentView.h"
-#include "TouchDiagnostics.h"
 
 namespace winrt::Microsoft::ReactNative::Composition::implementation {
 
@@ -848,43 +847,24 @@ void ScrollViewComponentView::updateState(
 
 void ScrollViewComponentView::updateStateWithContentOffset() noexcept {
   if (!m_state) {
-    RNW_TOUCH_TRACE("ScrollView::updateStateWithContentOffset SKIP (no m_state) tag=%d", static_cast<int>(Tag()));
     return;
   }
 
-  // Issue #16047 root cause: m_scrollVisual.ScrollPosition() returns the
-  // InteractionTracker position in PHYSICAL pixels (m_scrollVisual is sized in
-  // physical pixels via layoutMetrics.frame.size.* * pointScaleFactor — see
-  // updateLayoutMetrics / updateContentVisualSize), but Fabric's shadow-tree
-  // ScrollViewShadowNode::State::contentOffset is in DIPs (it must match
-  // layoutMetrics_.frame which is in DIPs, otherwise getRelativeLayoutMetrics
-  // — and therefore JS UIManager.measure() — over-subtracts by the
-  // pointScaleFactor). The other consumers of args.Position() (the throttled
-  // ScrollPositionChanged handler at line ~929 and the embedded-element handler
-  // at line ~1290) already divide by pointScaleFactor before populating
-  // scrollMetrics.contentOffset for the JS event emitter; this code path,
-  // which writes the AUTHORITATIVE shadow-tree state, was missing the same
-  // conversion. At any non-100% Windows display scale, this caused a tap on
-  // a Pressable inside a scrolled ScrollView to land at the correct visual
-  // position (composition hit-test uses the raw physical scroll value
-  // consistently — see hitTest at line ~1467) but JS measure() to report
-  // pre-scroll-relative bounds that DIDN'T contain the touch, which fired
-  // Pressability's LEAVE_PRESS_RECT synchronously inside pressIn → pressOut(0ms)
-  // → no `press` event → "stuck" button symptom (#16047).
+  // Issue #16047: m_scrollVisual.ScrollPosition() returns the InteractionTracker
+  // position in PHYSICAL pixels (the visual is sized as
+  // layoutMetrics.frame.size.* * pointScaleFactor — see updateLayoutMetrics /
+  // updateContentVisualSize) but ScrollViewShadowNode state's contentOffset is
+  // in DIPs. Without the conversion, JS UIManager.measure() over-subtracts by
+  // pointScaleFactor on non-100% display scales, leaving Pressables inside a
+  // scrolled ScrollView with stale page-space bounds that don't contain the
+  // touch — Pressability fires LEAVE_PRESS_RECT inside pressIn and suppresses
+  // press. The JS-event-emitter paths in this file (see lines using
+  // args.Position() / pointScaleFactor) already do this division.
   auto rawScrollPosition = m_scrollVisual.ScrollPosition();
   const float pointScaleFactor =
       m_layoutMetrics.pointScaleFactor > 0.0f ? m_layoutMetrics.pointScaleFactor : 1.0f;
   facebook::react::Point contentOffsetDips{
       rawScrollPosition.x / pointScaleFactor, rawScrollPosition.y / pointScaleFactor};
-
-  RNW_TOUCH_TRACE(
-      "ScrollView::updateStateWithContentOffset tag=%d rawScroll(physPx)=(%.2f,%.2f) -> contentOffset(dips)=(%.2f,%.2f) scale=%.3f",
-      static_cast<int>(Tag()),
-      rawScrollPosition.x,
-      rawScrollPosition.y,
-      contentOffsetDips.x,
-      contentOffsetDips.y,
-      pointScaleFactor);
 
   m_verticalScrollbarComponent->ContentOffset(rawScrollPosition);
   m_horizontalScrollbarComponent->ContentOffset(rawScrollPosition);
