@@ -1464,7 +1464,6 @@ void CompositionEventHandler::onPointerReleased(
   auto activeTouch = m_activeTouches.find(pointerId);
 
   if (activeTouch == m_activeTouches.end()) {
-        pointerId);
     return;
   }
 
@@ -1475,10 +1474,6 @@ void CompositionEventHandler::onPointerReleased(
     getTargetPointerArgs(fabricuiManager, pointerPoint, tag, ptScaled, ptLocal);
 
     if (tag == -1) {
-      RNW_TOUCH_TRACE(
-          "onPointerReleased pointerId=%d hit-test-miss -> dispatching cancel for original target tag=%d",
-          pointerId,
-          activeTouch->second.touch.target);
       if (activeTouch->second.eventEmitter) {
         DispatchSynthesizedTouchCancelForActiveTouch(activeTouch->second, pointerPoint, keyModifiers);
       }
@@ -1494,16 +1489,8 @@ void CompositionEventHandler::onPointerReleased(
         ->OnPointerReleased(args);
 
     UpdateActiveTouch(activeTouch->second, ptScaled, ptLocal);
-    RNW_TOUCH_TRACE(
-        "onPointerReleased dispatching End pointerId=%d originalTag=%d hitTag=%d identifier=%d",
-        pointerId,
-        activeTouch->second.touch.target,
-        tag,
-        activeTouch->second.touch.identifier);
     DispatchTouchEvent(TouchEventType::End, pointerId, pointerPoint, keyModifiers);
     m_activeTouches.erase(pointerId);
-    RNW_TOUCH_TRACE(
-        "onPointerReleased EXIT pointerId=%d activeTouchesSize=%zu", pointerId, m_activeTouches.size());
   }
 }
 
@@ -1696,14 +1683,7 @@ void CompositionEventHandler::DispatchSynthesizedTouchCancelForActiveTouch(
     const ActiveTouch &cancelledTouch,
     const winrt::Microsoft::ReactNative::Composition::Input::PointerPoint &pointerPoint,
     winrt::Windows::System::VirtualKeyModifiers keyModifiers) {
-  RNW_TOUCH_TRACE(
-      "DispatchSynthesizedTouchCancelForActiveTouch ENTER pointerId=%d targetTag=%d identifier=%d emitter=%p",
-      pointerPoint.PointerId(),
-      cancelledTouch.touch.target,
-      cancelledTouch.touch.identifier,
-      cancelledTouch.eventEmitter.get());
   if (!cancelledTouch.eventEmitter) {
-    RNW_TOUCH_TRACE("DispatchSynthesizedTouchCancelForActiveTouch EXIT (null emitter)");
     return;
   }
 
@@ -1739,11 +1719,6 @@ void CompositionEventHandler::DispatchSynthesizedTouchCancelForActiveTouch(
   }
 
   cancelledTouch.eventEmitter->onTouchCancel(touchEvent);
-  RNW_TOUCH_TRACE(
-      "DispatchSynthesizedTouchCancelForActiveTouch EXIT (onPointerCancel + onTouchCancel dispatched, changed=%zu touches=%zu targetTouches=%zu)",
-      touchEvent.changedTouches.size(),
-      touchEvent.touches.size(),
-      touchEvent.targetTouches.size());
 }
 
 // If we have events that include multiple pointer updates, we should change arg from pointerId to vector<pointerId>
