@@ -47,17 +47,13 @@ class CompositionEventHandler : public std::enable_shared_from_this<CompositionE
       facebook::react::Tag tag) noexcept;
   facebook::react::Tag PointerCapturingComponent() noexcept;
 
-  // Cancel any active touch RN is tracking for the given pointerId, dispatching
-  // onPointerCancel + onTouchCancel to its eventEmitter and removing it from
-  // m_activeTouches. Returns true if a touch was cancelled.
-  //
-  // Used by ScrollView to break out of stuck-touch states caused by
-  // VisualInteractionSource::TryRedirectForManipulation: the OS routes the
-  // pointer to the InteractionTracker for scrolling and then stops delivering
-  // PointerMoved/PointerReleased/PointerCaptureLost to InputPointerSource for
-  // that pointer, so without an out-of-band cancel the active touch stays
-  // wedged in m_activeTouches and the pressed Pressable never releases (issue
-  // #16047). Safe no-op if the pointerId is unknown.
+  // Issue #16047: cancel any active touch RN is tracking for the given pointerId,
+  // dispatching onPointerCancel + onTouchCancel and removing it from m_activeTouches.
+  // Returns true if a touch was cancelled. Used by ScrollView to break out of
+  // stuck-touch states when VisualInteractionSource::TryRedirectForManipulation
+  // hands the pointer to the InteractionTracker (after which the OS stops
+  // delivering PointerMoved / PointerReleased / PointerCaptureLost for it).
+  // Safe no-op if pointerId is unknown.
   bool CancelTouchesForPointer(PointerId pointerId) noexcept;
 
  private:
@@ -184,8 +180,7 @@ class CompositionEventHandler : public std::enable_shared_from_this<CompositionE
   bool CancelActiveTouchForPointerInternal(
       PointerId pointerId,
       const winrt::Microsoft::ReactNative::Composition::Input::PointerPoint &pointerPoint,
-      winrt::Windows::System::VirtualKeyModifiers keyModifiers,
-      const char *callerTag) noexcept;
+      winrt::Windows::System::VirtualKeyModifiers keyModifiers) noexcept;
 
   std::vector<winrt::Microsoft::ReactNative::ComponentView> GetTouchableViewsInPathToRoot(
       const winrt::Microsoft::ReactNative::ComponentView &componentView);

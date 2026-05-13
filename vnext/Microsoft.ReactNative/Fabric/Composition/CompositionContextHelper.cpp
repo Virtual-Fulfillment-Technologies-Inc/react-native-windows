@@ -19,7 +19,6 @@
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.interactions.h>
 #include "CompositionHelpers.h"
-#include "TouchDiagnostics.h"
 
 #include <winrt/Microsoft.UI.Composition.h>
 #include <winrt/Microsoft.UI.Composition.interactions.h>
