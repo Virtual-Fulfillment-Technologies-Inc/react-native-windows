@@ -23,7 +23,9 @@
 #include <functional>
 #include "ContentIslandComponentView.h"
 #include "JSValueReader.h"
+#include "ReactNativeIsland.h"
 #include "RootComponentView.h"
+#include "TouchDiagnostics.h"
 
 namespace winrt::Microsoft::ReactNative::Composition::implementation {
 
@@ -846,16 +848,50 @@ void ScrollViewComponentView::updateState(
 
 void ScrollViewComponentView::updateStateWithContentOffset() noexcept {
   if (!m_state) {
+    RNW_TOUCH_TRACE("ScrollView::updateStateWithContentOffset SKIP (no m_state) tag=%d", static_cast<int>(Tag()));
     return;
   }
 
-  auto scrollPosition = m_scrollVisual.ScrollPosition();
-  m_verticalScrollbarComponent->ContentOffset(scrollPosition);
-  m_horizontalScrollbarComponent->ContentOffset(scrollPosition);
+  // Issue #16047 root cause: m_scrollVisual.ScrollPosition() returns the
+  // InteractionTracker position in PHYSICAL pixels (m_scrollVisual is sized in
+  // physical pixels via layoutMetrics.frame.size.* * pointScaleFactor — see
+  // updateLayoutMetrics / updateContentVisualSize), but Fabric's shadow-tree
+  // ScrollViewShadowNode::State::contentOffset is in DIPs (it must match
+  // layoutMetrics_.frame which is in DIPs, otherwise getRelativeLayoutMetrics
+  // — and therefore JS UIManager.measure() — over-subtracts by the
+  // pointScaleFactor). The other consumers of args.Position() (the throttled
+  // ScrollPositionChanged handler at line ~929 and the embedded-element handler
+  // at line ~1290) already divide by pointScaleFactor before populating
+  // scrollMetrics.contentOffset for the JS event emitter; this code path,
+  // which writes the AUTHORITATIVE shadow-tree state, was missing the same
+  // conversion. At any non-100% Windows display scale, this caused a tap on
+  // a Pressable inside a scrolled ScrollView to land at the correct visual
+  // position (composition hit-test uses the raw physical scroll value
+  // consistently — see hitTest at line ~1467) but JS measure() to report
+  // pre-scroll-relative bounds that DIDN'T contain the touch, which fired
+  // Pressability's LEAVE_PRESS_RECT synchronously inside pressIn → pressOut(0ms)
+  // → no `press` event → "stuck" button symptom (#16047).
+  auto rawScrollPosition = m_scrollVisual.ScrollPosition();
+  const float pointScaleFactor =
+      m_layoutMetrics.pointScaleFactor > 0.0f ? m_layoutMetrics.pointScaleFactor : 1.0f;
+  facebook::react::Point contentOffsetDips{
+      rawScrollPosition.x / pointScaleFactor, rawScrollPosition.y / pointScaleFactor};
 
-  m_state->updateState([scrollPosition](const facebook::react::ScrollViewShadowNode::ConcreteState::Data &data) {
+  RNW_TOUCH_TRACE(
+      "ScrollView::updateStateWithContentOffset tag=%d rawScroll(physPx)=(%.2f,%.2f) -> contentOffset(dips)=(%.2f,%.2f) scale=%.3f",
+      static_cast<int>(Tag()),
+      rawScrollPosition.x,
+      rawScrollPosition.y,
+      contentOffsetDips.x,
+      contentOffsetDips.y,
+      pointScaleFactor);
+
+  m_verticalScrollbarComponent->ContentOffset(rawScrollPosition);
+  m_horizontalScrollbarComponent->ContentOffset(rawScrollPosition);
+
+  m_state->updateState([contentOffsetDips](const facebook::react::ScrollViewShadowNode::ConcreteState::Data &data) {
     auto newData = data;
-    newData.contentOffset = {scrollPosition.x, scrollPosition.y};
+    newData.contentOffset = contentOffsetDips;
     return std::make_shared<facebook::react::ScrollViewShadowNode::ConcreteState::Data const>(newData);
   });
 }
@@ -1389,12 +1425,62 @@ winrt::Microsoft::ReactNative::Composition::Experimental::IVisual ScrollViewComp
       [this](
           winrt::IInspectable const & /*sender*/,
           winrt::Microsoft::ReactNative::Composition::Experimental::IScrollPositionChangedArgs const &args) {
+        // Issue #16047 follow-up: push the FINAL settled scroll position into
+        // Fabric's shadow tree before notifying JS. Without this, the per-frame
+        // ScrollPositionChanged updates are throttled to ~17ms and the very
+        // last frames of inertia (or the final settle delta) are silently
+        // dropped, leaving the ScrollView's shadow-tree contentOffset slightly
+        // stale. JS UIManager.measure() then returns pre-scroll-relative
+        // bounds for any row inside this ScrollView, which causes
+        // Pressability's _measureResponderRegion check to fail on the next
+        // tap (touch lands at the post-scroll visual position, measured
+        // bounds are still pre-scroll → LEAVE_PRESS_RECT fires synchronously
+        // → pressIn → pressOut(0ms) → no press). Native hit-testing already
+        // uses m_scrollVisual.ScrollPosition() directly (see hitTest below)
+        // so it correctly lands on the visible row; only JS measure was
+        // disagreeing. Other completion paths (ScrollEndDrag, ScrollBeginDrag)
+        // already call updateStateWithContentOffset(); momentum-end was the
+        // missing one.
+        updateStateWithContentOffset();
         auto eventEmitter = GetEventEmitter();
         if (eventEmitter) {
           auto scrollMetrics = getScrollMetrics(eventEmitter, args);
           std::static_pointer_cast<facebook::react::ScrollViewEventEmitter const>(eventEmitter)
               ->onMomentumScrollEnd(scrollMetrics);
         }
+      });
+
+  // Issue #16047: when the InteractionTracker claims a touch for scrolling, the
+  // OS stops delivering further pointer events for that PointerId — including
+  // PointerCaptureLost and PointerReleased — so RN's m_activeTouches keeps a
+  // zombie entry and the originally-pressed Pressable never receives an
+  // onPressOut. Synthesize a touch-cancel ourselves the moment the tracker
+  // takes over, before the user lifts their finger.
+  m_scrollInteractingStateEnteredRevoker = m_scrollVisual.InteractingStateEntered(
+      winrt::auto_revoke,
+      [this](
+          winrt::IInspectable const & /*sender*/,
+          winrt::Microsoft::ReactNative::Composition::Experimental::IInteractingStateEnteredArgs const &args) {
+        const int32_t pointerId = args.PointerId();
+        RNW_TOUCH_TRACE(
+            "ScrollViewComponentView::InteractingStateEntered handler pointerId=%d -> CancelTouchesForPointer",
+            pointerId);
+        auto root = rootComponentView();
+        if (!root) {
+          RNW_TOUCH_TRACE(
+              "ScrollViewComponentView::InteractingStateEntered handler pointerId=%d SKIP (no rootComponentView)",
+              pointerId);
+          return;
+        }
+        auto rootView = root->ReactNativeIsland();
+        if (!rootView) {
+          RNW_TOUCH_TRACE(
+              "ScrollViewComponentView::InteractingStateEntered handler pointerId=%d SKIP (no ReactNativeIsland)",
+              pointerId);
+          return;
+        }
+        winrt::get_self<winrt::Microsoft::ReactNative::implementation::ReactNativeIsland>(rootView)
+            ->CancelTouchesForPointer(pointerId);
       });
 
   return visual;

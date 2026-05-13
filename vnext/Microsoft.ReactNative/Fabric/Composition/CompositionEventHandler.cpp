@@ -18,6 +18,7 @@
 #include "ParagraphComponentView.h"
 #include "ReactNativeIsland.h"
 #include "RootComponentView.h"
+#include "TouchDiagnostics.h"
 
 namespace ABI::Microsoft::UI::Input {
 struct IInputCursor;
@@ -145,6 +146,7 @@ CompositionEventHandler::CompositionEventHandler(
 
 void CompositionEventHandler::Initialize() noexcept {
   if (auto island = m_wkRootView.get().Island()) {
+    RNW_TOUCH_TRACE("Initialize: registering Island InputPointerSource handlers (this=%p)", this);
     auto pointerSource = winrt::Microsoft::UI::Input::InputPointerSource::GetForIsland(island);
 
     m_pointerPressedToken =
@@ -556,6 +558,7 @@ int64_t CompositionEventHandler::SendMessage(HWND hwnd, uint32_t msg, uint64_t w
       return 0;
     }
     case WM_CAPTURECHANGED: {
+      RNW_TOUCH_TRACE("SendMessage WM_CAPTURECHANGED (HWND host) hwnd=%p newCaptureHwnd=%p", hwnd, (HWND)lParam);
       if (auto strongRootView = m_wkRootView.get()) {
         auto pp = winrt::make<winrt::Microsoft::ReactNative::Composition::Input::implementation::PointerPoint>(
             hwnd, msg, wParam, lParam, strongRootView.ScaleFactor());
@@ -1089,10 +1092,24 @@ void CompositionEventHandler::getTargetPointerArgs(
 void CompositionEventHandler::onPointerCaptureLost(
     const winrt::Microsoft::ReactNative::Composition::Input::PointerPoint &pointerPoint,
     winrt::Windows::System::VirtualKeyModifiers keyModifiers) noexcept {
-  if (SurfaceId() == -1)
+  PointerId tracePointerId = pointerPoint.PointerId();
+  RNW_TOUCH_TRACE(
+      "onPointerCaptureLost ENTER pointerId=%d activeTouchesSize=%zu jsCapturingTag=%d",
+      tracePointerId,
+      m_activeTouches.size(),
+      m_pointerCapturingComponentTag);
+
+  if (SurfaceId() == -1) {
+    RNW_TOUCH_TRACE("onPointerCaptureLost EXIT pointerId=%d reason=surfaceId-unset", tracePointerId);
     return;
+  }
 
   if (m_pointerCapturingComponentTag != -1) {
+    RNW_TOUCH_TRACE(
+        "onPointerCaptureLost JS-capture path pointerId=%d capturingTag=%d capturedPointersCount=%zu",
+        tracePointerId,
+        m_pointerCapturingComponentTag,
+        m_capturedPointers.size());
     // copy array to avoid iterator being invalidated during deletion
     std::unordered_set<PointerId> capturedPointers = m_capturedPointers;
 
@@ -1106,11 +1123,19 @@ void CompositionEventHandler::onPointerCaptureLost(
       // Alt+Tab, another window coming foreground).
       auto activeTouch = m_activeTouches.find(pointerId);
       if (activeTouch != m_activeTouches.end()) {
+        RNW_TOUCH_TRACE(
+            "onPointerCaptureLost JS-capture cancel pointerId=%d targetTag=%d identifier=%d",
+            pointerId,
+            activeTouch->second.touch.target,
+            activeTouch->second.touch.identifier);
         ActiveTouch cancelledTouchCopy = std::move(activeTouch->second);
         m_activeTouches.erase(activeTouch);
         if (cancelledTouchCopy.eventEmitter) {
           DispatchSynthesizedTouchCancelForActiveTouch(cancelledTouchCopy, pointerPoint, keyModifiers);
         }
+      } else {
+        RNW_TOUCH_TRACE(
+            "onPointerCaptureLost JS-capture cancel pointerId=%d MISS (no activeTouch)", pointerId);
       }
     }
 
@@ -1118,23 +1143,114 @@ void CompositionEventHandler::onPointerCaptureLost(
   }
 
   // Also cancel any active touch for the specific pointer that lost capture, even
-  // when no JS-level CapturePointer was ever issued. This handles ScrollView (and
-  // any other VisualInteractionSource) calling TryRedirectForManipulation: the OS
-  // reassigns the pointer to the InteractionTracker, fires PointerCaptureLost, and
-  // then stops delivering PointerMoved/PointerReleased to us. Without this cleanup
-  // m_activeTouches keeps a zombie entry whose target is the originally-pressed
-  // Pressable, leaving it visually pressed and causing later taps to be attributed
-  // to that original target. If the entry was already cleared above (for a JS-level
-  // capture) or by onPointerReleased running first, the find() is a no-op.
-  PointerId pointerId = pointerPoint.PointerId();
+  // when no JS-level CapturePointer was ever issued. Defense in depth — in
+  // practice WinAppSDK Microsoft.UI does NOT deliver PointerCaptureLost for
+  // pointers redirected by VisualInteractionSource::TryRedirectForManipulation
+  // (issue #16047), so this path is most useful for system-driven losses (focus
+  // change, another window stealing input, system back gesture, etc.).
+  // ScrollView's redirect path is handled separately via
+  // CancelTouchesForPointer, called from IScrollVisual::InteractingStateEntered.
+  CancelActiveTouchForPointerInternal(
+      pointerPoint.PointerId(), pointerPoint, keyModifiers, "onPointerCaptureLost unconditional");
+  RNW_TOUCH_TRACE(
+      "onPointerCaptureLost EXIT pointerId=%d activeTouchesSize=%zu", tracePointerId, m_activeTouches.size());
+}
+
+bool CompositionEventHandler::CancelActiveTouchForPointerInternal(
+    PointerId pointerId,
+    const winrt::Microsoft::ReactNative::Composition::Input::PointerPoint &pointerPoint,
+    winrt::Windows::System::VirtualKeyModifiers keyModifiers,
+    const char *callerTag) noexcept {
   auto activeTouch = m_activeTouches.find(pointerId);
-  if (activeTouch != m_activeTouches.end()) {
-    ActiveTouch cancelledTouchCopy = std::move(activeTouch->second);
-    m_activeTouches.erase(activeTouch);
-    if (cancelledTouchCopy.eventEmitter) {
-      DispatchSynthesizedTouchCancelForActiveTouch(cancelledTouchCopy, pointerPoint, keyModifiers);
-    }
+  if (activeTouch == m_activeTouches.end()) {
+    RNW_TOUCH_TRACE(
+        "%s cancel pointerId=%d MISS (no activeTouch)", callerTag ? callerTag : "(unknown)", pointerId);
+    return false;
   }
+
+  RNW_TOUCH_TRACE(
+      "%s cancel pointerId=%d targetTag=%d identifier=%d emitter=%p",
+      callerTag ? callerTag : "(unknown)",
+      pointerId,
+      activeTouch->second.touch.target,
+      activeTouch->second.touch.identifier,
+      activeTouch->second.eventEmitter.get());
+
+  ActiveTouch cancelledTouchCopy = std::move(activeTouch->second);
+  m_activeTouches.erase(activeTouch);
+
+  // Issue #16047 follow-up: avoid handing the just-cancelled JS touch identifier
+  // back to the very next press. RN core's touch dispatcher and Pressability keep
+  // residual per-identifier state across a cancel→start boundary; if the next
+  // touchstart arrives carrying the identifier we just cancelled, Pressability
+  // bails out of the new press synchronously (pressIn → pressOut held 0ms → no
+  // press) — see #16047 repro screenshots showing two consecutive id=4 touches
+  // where the second never fires `press`. Bumping m_touchId past the cancelled
+  // identifier biases AllocateTouchIdentifier to skip it on the next allocation,
+  // letting the slot recycle naturally a couple of presses later.
+  constexpr int kMaxTouchIdentifier = 20;
+  const int cancelledIdentifier = cancelledTouchCopy.touch.identifier;
+  if (cancelledIdentifier >= 0 && cancelledIdentifier < kMaxTouchIdentifier &&
+      cancelledIdentifier != static_cast<int>(MOUSE_POINTER_ID)) {
+    const int nextBase = (cancelledIdentifier + 1) % kMaxTouchIdentifier;
+    RNW_TOUCH_TRACE(
+        "%s cancel pointerId=%d advancing m_touchId %d -> %d to avoid immediate identifier reuse (cancelledIdentifier=%d)",
+        callerTag ? callerTag : "(unknown)",
+        pointerId,
+        m_touchId,
+        nextBase,
+        cancelledIdentifier);
+    m_touchId = nextBase;
+  }
+
+  if (!cancelledTouchCopy.eventEmitter) {
+    RNW_TOUCH_TRACE(
+        "%s cancel pointerId=%d SKIP cancel-dispatch (null emitter)",
+        callerTag ? callerTag : "(unknown)",
+        pointerId);
+    return false;
+  }
+
+  // Prefer the live PointerPoint passed in by the caller; fall back to the
+  // last one observed for this active touch (set in onPointerPressed and
+  // refreshed in onPointerMoved). The cached point is needed when the caller
+  // doesn't have access to a PointerPoint, e.g. CancelTouchesForPointer
+  // invoked from the ScrollView InteractionTracker callback. WinRT projection
+  // types are smart-pointer-shaped, so copying is cheap.
+  auto pointForDispatch = pointerPoint;
+  if (!pointForDispatch) {
+    pointForDispatch = cancelledTouchCopy.lastPointerPoint;
+  }
+  if (!pointForDispatch) {
+    RNW_TOUCH_TRACE(
+        "%s cancel pointerId=%d SKIP cancel-dispatch (no PointerPoint available)",
+        callerTag ? callerTag : "(unknown)",
+        pointerId);
+    return false;
+  }
+
+  DispatchSynthesizedTouchCancelForActiveTouch(cancelledTouchCopy, pointForDispatch, keyModifiers);
+  return true;
+}
+
+bool CompositionEventHandler::CancelTouchesForPointer(PointerId pointerId) noexcept {
+  RNW_TOUCH_TRACE(
+      "CancelTouchesForPointer ENTER pointerId=%d activeTouchesSize=%zu", pointerId, m_activeTouches.size());
+
+  // Pass a null PointerPoint — CancelActiveTouchForPointerInternal will use the
+  // cached lastPointerPoint from the ActiveTouch.
+  bool cancelled = CancelActiveTouchForPointerInternal(
+      pointerId,
+      winrt::Microsoft::ReactNative::Composition::Input::PointerPoint{nullptr},
+      winrt::Windows::System::VirtualKeyModifiers::None,
+      "CancelTouchesForPointer");
+
+  RNW_TOUCH_TRACE(
+      "CancelTouchesForPointer EXIT pointerId=%d cancelled=%d activeTouchesSize=%zu",
+      pointerId,
+      cancelled ? 1 : 0,
+      m_activeTouches.size());
+  return cancelled;
 }
 
 void CompositionEventHandler::onPointerMoved(
@@ -1190,8 +1306,16 @@ void CompositionEventHandler::onPointerMoved(
     HandleIncomingPointerEvent(pointerEvent, targetView, pointerPoint, keyModifiers, handler);
 
     if (isActiveTouch) {
+      RNW_TOUCH_TRACE(
+          "onPointerMoved active pointerId=%d targetTag=%d identifier=%d pos=(%.1f,%.1f)",
+          pointerId,
+          tag,
+          activeTouch->second.touch.identifier,
+          ptScaled.x,
+          ptScaled.y);
       // For active touches with responders, also dispatch through touch event system
       UpdateActiveTouch(activeTouch->second, ptScaled, ptLocal);
+      activeTouch->second.lastPointerPoint = pointerPoint;
       DispatchTouchEvent(TouchEventType::Move, pointerId, pointerPoint, keyModifiers);
     }
   }
@@ -1264,6 +1388,11 @@ int CompositionEventHandler::AllocateTouchIdentifier() noexcept {
     });
     if (!inUse) {
       m_touchId = (candidate + 1) % kMaxTouchIdentifier;
+      RNW_TOUCH_TRACE(
+          "AllocateTouchIdentifier -> %d (activeTouchesSize=%zu, nextBase=%d)",
+          candidate,
+          m_activeTouches.size(),
+          m_touchId);
       return candidate;
     }
   }
@@ -1275,6 +1404,10 @@ int CompositionEventHandler::AllocateTouchIdentifier() noexcept {
     fallback = m_touchId;
     m_touchId = (m_touchId + 1) % kMaxTouchIdentifier;
   }
+  RNW_TOUCH_TRACE(
+      "AllocateTouchIdentifier WRAPPED -> %d (all 19 non-mouse slots in use, activeTouchesSize=%zu)",
+      fallback,
+      m_activeTouches.size());
   return fallback;
 }
 
@@ -1294,6 +1427,11 @@ void CompositionEventHandler::onPointerPressed(
   }
 
   PointerId pointerId = pointerPoint.PointerId();
+  RNW_TOUCH_TRACE(
+      "onPointerPressed ENTER pointerId=%d deviceType=%d activeTouchesSize=%zu",
+      pointerId,
+      static_cast<int>(pointerPoint.PointerDeviceType()),
+      m_activeTouches.size());
 
   auto staleTouch = m_activeTouches.find(pointerId);
 
@@ -1303,6 +1441,11 @@ void CompositionEventHandler::onPointerPressed(
     // Copy and erase before dispatching to avoid holding a reference into m_activeTouches
     // across DispatchSynthesizedTouchCancelForActiveTouch, which calls HandleIncomingPointerEvent
     // and iterates m_activeTouches internally.
+    RNW_TOUCH_TRACE(
+        "onPointerPressed STALE-TOUCH pointerId=%d targetTag=%d identifier=%d (evicting before new press)",
+        pointerId,
+        staleTouch->second.touch.target,
+        staleTouch->second.touch.identifier);
     ActiveTouch staleTouchCopy = std::move(staleTouch->second);
     m_activeTouches.erase(staleTouch);
     if (staleTouchCopy.eventEmitter) {
@@ -1312,14 +1455,18 @@ void CompositionEventHandler::onPointerPressed(
 
   const auto eventType = TouchEventType::Start;
 
-  if (std::shared_ptr<FabricUIManager> fabricuiManager =
+    if (std::shared_ptr<FabricUIManager> fabricuiManager =
           ::Microsoft::ReactNative::FabricUIManager::FromProperties(m_context.Properties())) {
     facebook::react::Tag tag = -1;
     facebook::react::Point ptLocal, ptScaled;
     getTargetPointerArgs(fabricuiManager, pointerPoint, tag, ptScaled, ptLocal);
 
-    if (tag == -1)
+    if (tag == -1) {
+      RNW_TOUCH_TRACE("onPointerPressed EXIT pointerId=%d reason=hit-test-miss", pointerId);
       return;
+    }
+    RNW_TOUCH_TRACE(
+        "onPointerPressed hit-test pointerId=%d hitTag=%d pos=(%.1f,%.1f)", pointerId, tag, ptScaled.x, ptScaled.y);
 
     auto targetComponentView = fabricuiManager->GetViewRegistry().componentViewDescriptorWithTag(tag).view;
     auto args = winrt::make<winrt::Microsoft::ReactNative::Composition::Input::implementation::PointerRoutedEventArgs>(
@@ -1380,10 +1527,13 @@ void CompositionEventHandler::onPointerPressed(
     // Don't register the touch if no eventEmitter was found — inserting a null-emitter entry
     // into m_activeTouches would block future presses with the same pointer ID.
     if (!activeTouch.eventEmitter) {
+      RNW_TOUCH_TRACE(
+          "onPointerPressed EXIT pointerId=%d reason=no-eventEmitter (no Pressable in path)", pointerId);
       return;
     }
 
     UpdateActiveTouch(activeTouch, ptScaled, ptLocal);
+    activeTouch.lastPointerPoint = pointerPoint;
 
     activeTouch.isPrimary = pointerPoint.Properties().IsPrimary();
     // Map the Windows pointer ID to a small identifier (0–19) safe for use as a JS array index.
@@ -1403,6 +1553,13 @@ void CompositionEventHandler::onPointerPressed(
     }
 
     m_activeTouches.emplace(pointerId, activeTouch);
+    RNW_TOUCH_TRACE(
+        "onPointerPressed EMPLACED pointerId=%d targetTag=%d identifier=%d isPrimary=%d activeTouchesSize=%zu",
+        pointerId,
+        activeTouch.touch.target,
+        activeTouch.touch.identifier,
+        activeTouch.isPrimary ? 1 : 0,
+        m_activeTouches.size());
 
     DispatchTouchEvent(eventType, pointerId, pointerPoint, keyModifiers);
   }
@@ -1412,6 +1569,8 @@ void CompositionEventHandler::onPointerReleased(
     const winrt::Microsoft::ReactNative::Composition::Input::PointerPoint &pointerPoint,
     winrt::Windows::System::VirtualKeyModifiers keyModifiers) noexcept {
   int pointerId = pointerPoint.PointerId();
+  RNW_TOUCH_TRACE(
+      "onPointerReleased ENTER pointerId=%d activeTouchesSize=%zu", pointerId, m_activeTouches.size());
 
   auto *rootView = RootComponentView();
   if (!rootView)
@@ -1421,6 +1580,9 @@ void CompositionEventHandler::onPointerReleased(
   auto activeTouch = m_activeTouches.find(pointerId);
 
   if (activeTouch == m_activeTouches.end()) {
+    RNW_TOUCH_TRACE(
+        "onPointerReleased MISS pointerId=%d (no activeTouch — likely cleared by onPointerCaptureLost or never registered)",
+        pointerId);
     return;
   }
 
@@ -1431,6 +1593,10 @@ void CompositionEventHandler::onPointerReleased(
     getTargetPointerArgs(fabricuiManager, pointerPoint, tag, ptScaled, ptLocal);
 
     if (tag == -1) {
+      RNW_TOUCH_TRACE(
+          "onPointerReleased pointerId=%d hit-test-miss -> dispatching cancel for original target tag=%d",
+          pointerId,
+          activeTouch->second.touch.target);
       if (activeTouch->second.eventEmitter) {
         DispatchSynthesizedTouchCancelForActiveTouch(activeTouch->second, pointerPoint, keyModifiers);
       }
@@ -1446,8 +1612,16 @@ void CompositionEventHandler::onPointerReleased(
         ->OnPointerReleased(args);
 
     UpdateActiveTouch(activeTouch->second, ptScaled, ptLocal);
+    RNW_TOUCH_TRACE(
+        "onPointerReleased dispatching End pointerId=%d originalTag=%d hitTag=%d identifier=%d",
+        pointerId,
+        activeTouch->second.touch.target,
+        tag,
+        activeTouch->second.touch.identifier);
     DispatchTouchEvent(TouchEventType::End, pointerId, pointerPoint, keyModifiers);
     m_activeTouches.erase(pointerId);
+    RNW_TOUCH_TRACE(
+        "onPointerReleased EXIT pointerId=%d activeTouchesSize=%zu", pointerId, m_activeTouches.size());
   }
 }
 
@@ -1640,7 +1814,14 @@ void CompositionEventHandler::DispatchSynthesizedTouchCancelForActiveTouch(
     const ActiveTouch &cancelledTouch,
     const winrt::Microsoft::ReactNative::Composition::Input::PointerPoint &pointerPoint,
     winrt::Windows::System::VirtualKeyModifiers keyModifiers) {
+  RNW_TOUCH_TRACE(
+      "DispatchSynthesizedTouchCancelForActiveTouch ENTER pointerId=%d targetTag=%d identifier=%d emitter=%p",
+      pointerPoint.PointerId(),
+      cancelledTouch.touch.target,
+      cancelledTouch.touch.identifier,
+      cancelledTouch.eventEmitter.get());
   if (!cancelledTouch.eventEmitter) {
+    RNW_TOUCH_TRACE("DispatchSynthesizedTouchCancelForActiveTouch EXIT (null emitter)");
     return;
   }
 
@@ -1676,6 +1857,11 @@ void CompositionEventHandler::DispatchSynthesizedTouchCancelForActiveTouch(
   }
 
   cancelledTouch.eventEmitter->onTouchCancel(touchEvent);
+  RNW_TOUCH_TRACE(
+      "DispatchSynthesizedTouchCancelForActiveTouch EXIT (onPointerCancel + onTouchCancel dispatched, changed=%zu touches=%zu targetTouches=%zu)",
+      touchEvent.changedTouches.size(),
+      touchEvent.touches.size(),
+      touchEvent.targetTouches.size());
 }
 
 // If we have events that include multiple pointer updates, we should change arg from pointerId to vector<pointerId>

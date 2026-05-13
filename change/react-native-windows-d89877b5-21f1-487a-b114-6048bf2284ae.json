@@ -1,0 +1,7 @@
+{
+  "type": "prerelease",
+  "comment": "Fix #16047: Pressables inside ScrollView stuck after scrolling on high-DPI displays. Two root causes: (1) WinAppSDK does not deliver PointerCaptureLost (or any subsequent PointerMoved/PointerReleased) for pointers redirected by VisualInteractionSource::TryRedirectForManipulation, leaving zombie entries in CompositionEventHandler's active-touch map — synthesize a touch cancel from the InteractionTracker's InteractingStateEntered callback so RN learns the touch has ended. (2) ScrollViewComponentView::updateStateWithContentOffset() was writing m_scrollVisual.ScrollPosition() directly into ScrollViewShadowNode state's contentOffset, but ScrollPosition is in physical pixels (m_scrollVisual is sized via layoutMetrics * pointScaleFactor) while contentOffset must be in DIPs to match the rest of the shadow tree. At Windows display scales > 100%, this caused JS UIManager.measure() to report stale (over-subtracted) bounds for any descendant of a scrolled ScrollView, which fired Pressability's LEAVE_PRESS_RECT inside pressIn → pressOut(0ms) → no `press` event. Divide by pointScaleFactor before storing, matching what the JS-event-emitter paths in the same file already do.",
+  "packageName": "react-native-windows",
+  "email": "gordomacmaster@gmail.com",
+  "dependentChangeType": "patch"
+}
