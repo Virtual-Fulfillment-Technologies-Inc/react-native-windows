@@ -1405,22 +1405,12 @@ winrt::Microsoft::ReactNative::Composition::Experimental::IVisual ScrollViewComp
       [this](
           winrt::IInspectable const & /*sender*/,
           winrt::Microsoft::ReactNative::Composition::Experimental::IScrollPositionChangedArgs const &args) {
-        // Issue #16047 follow-up: push the FINAL settled scroll position into
-        // Fabric's shadow tree before notifying JS. Without this, the per-frame
-        // ScrollPositionChanged updates are throttled to ~17ms and the very
-        // last frames of inertia (or the final settle delta) are silently
-        // dropped, leaving the ScrollView's shadow-tree contentOffset slightly
-        // stale. JS UIManager.measure() then returns pre-scroll-relative
-        // bounds for any row inside this ScrollView, which causes
-        // Pressability's _measureResponderRegion check to fail on the next
-        // tap (touch lands at the post-scroll visual position, measured
-        // bounds are still pre-scroll → LEAVE_PRESS_RECT fires synchronously
-        // → pressIn → pressOut(0ms) → no press). Native hit-testing already
-        // uses m_scrollVisual.ScrollPosition() directly (see hitTest below)
-        // so it correctly lands on the visible row; only JS measure was
-        // disagreeing. Other completion paths (ScrollEndDrag, ScrollBeginDrag)
-        // already call updateStateWithContentOffset(); momentum-end was the
-        // missing one.
+        // Issue #16047: push the FINAL settled scroll position into Fabric's
+        // shadow tree before notifying JS. The per-frame ScrollPositionChanged
+        // updates can drop the last inertia delta, leaving contentOffset stale
+        // and JS UIManager.measure() returning pre-settle-relative bounds.
+        // ScrollEndDrag / ScrollBeginDrag already call this; momentum-end was
+        // the missing completion path.
         updateStateWithContentOffset();
         auto eventEmitter = GetEventEmitter();
         if (eventEmitter) {
@@ -1442,21 +1432,12 @@ winrt::Microsoft::ReactNative::Composition::Experimental::IVisual ScrollViewComp
           winrt::IInspectable const & /*sender*/,
           winrt::Microsoft::ReactNative::Composition::Experimental::IInteractingStateEnteredArgs const &args) {
         const int32_t pointerId = args.PointerId();
-        RNW_TOUCH_TRACE(
-            "ScrollViewComponentView::InteractingStateEntered handler pointerId=%d -> CancelTouchesForPointer",
-            pointerId);
         auto root = rootComponentView();
         if (!root) {
-          RNW_TOUCH_TRACE(
-              "ScrollViewComponentView::InteractingStateEntered handler pointerId=%d SKIP (no rootComponentView)",
-              pointerId);
           return;
         }
         auto rootView = root->ReactNativeIsland();
         if (!rootView) {
-          RNW_TOUCH_TRACE(
-              "ScrollViewComponentView::InteractingStateEntered handler pointerId=%d SKIP (no ReactNativeIsland)",
-              pointerId);
           return;
         }
         winrt::get_self<winrt::Microsoft::ReactNative::implementation::ReactNativeIsland>(rootView)
