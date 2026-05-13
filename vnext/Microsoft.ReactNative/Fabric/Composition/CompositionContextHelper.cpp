@@ -737,13 +737,6 @@ struct CompScrollerVisual : winrt::implements<
     void IdleStateEntered(
         typename TTypeRedirects::InteractionTracker sender,
         typename TTypeRedirects::InteractionTrackerIdleStateEnteredArgs args) noexcept {
-      RNW_TOUCH_TRACE(
-          "InteractionTracker::IdleStateEntered requestId=%d wasInteracting=%d wasInertia=%d pos=(%.1f,%.1f)",
-          args.RequestId(),
-          m_outer->m_interacting ? 1 : 0,
-          m_outer->m_inertia ? 1 : 0,
-          sender.Position().x,
-          sender.Position().y);
       // If we were in inertia and are now idle, momentum has ended
       if (m_outer->m_inertia) {
         m_outer->FireScrollMomentumEnd({sender.Position().x, sender.Position().y});
