@@ -87,11 +87,17 @@ LRESULT CompositionHwndHost::TranslateMessage(int msg, uint64_t wParam, int64_t 
     }
     case WM_DPICHANGED: {
       m_compRootView.ScaleFactor(ScaleFactor());
-      // Reset cached dimensions so UpdateSize() unconditionally re-computes
-      // DIP-space layout constraints under the new scale factor.
-      m_height = 0;
-      m_width = 0;
-      UpdateSize();
+      // Apply the OS-suggested size/position so the window scales correctly
+      // when moved to a monitor with a different DPI.
+      auto *suggestedRect = reinterpret_cast<const RECT *>(lParam);
+      SetWindowPos(
+          m_hwnd,
+          nullptr,
+          suggestedRect->left,
+          suggestedRect->top,
+          suggestedRect->right - suggestedRect->left,
+          suggestedRect->bottom - suggestedRect->top,
+          SWP_NOZORDER | SWP_NOACTIVATE);
       return 0;
     }
   }
