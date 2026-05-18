@@ -87,6 +87,10 @@ LRESULT CompositionHwndHost::TranslateMessage(int msg, uint64_t wParam, int64_t 
     }
     case WM_DPICHANGED: {
       m_compRootView.ScaleFactor(ScaleFactor());
+      // Reset cached dimensions so UpdateSize() unconditionally re-computes
+      // DIP-space layout constraints under the new scale factor.
+      m_height = 0;
+      m_width = 0;
       UpdateSize();
       return 0;
     }
