@@ -34,19 +34,19 @@ void CompositionHwndHost::Initialize(uint64_t hwnd) noexcept {
       ReactViewHost().ReactNativeHost().InstanceSettings().Properties());
   m_compRootView = winrt::Microsoft::ReactNative::ReactNativeIsland(compositor);
 
-  auto bridge = winrt::Microsoft::UI::Content::DesktopChildSiteBridge::Create(
+  m_bridge = winrt::Microsoft::UI::Content::DesktopChildSiteBridge::Create(
       compositor, winrt::Microsoft::UI::GetWindowIdFromWindow(m_hwnd));
 
   // ResizePolicy must be set before Connect so the bridge configures the
   // island's coordinate space with correct DPI awareness (matches
   // ReactNativeWindow::ContentSiteBridge initialization order).
-  bridge.ResizePolicy(winrt::Microsoft::UI::Content::ContentSizePolicy::ResizeContentToParentWindow);
+  m_bridge.ResizePolicy(winrt::Microsoft::UI::Content::ContentSizePolicy::ResizeContentToParentWindow);
 
   auto island = m_compRootView.Island();
   m_compRootView.ScaleFactor(ScaleFactor());
 
-  bridge.Connect(island);
-  bridge.Show();
+  m_bridge.Connect(island);
+  m_bridge.Show();
 
   m_compRootView.ReactViewHost(std::move(m_reactViewHost));
   m_compRootView.ScaleFactor(ScaleFactor());
