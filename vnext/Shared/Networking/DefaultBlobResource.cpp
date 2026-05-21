@@ -246,6 +246,38 @@ void BlobWebSocketModuleContentHandler::ProcessMessage(
   params[blobKeys.Type] = blobKeys.Blob;
 }
 
+bool BlobWebSocketModuleContentHandler::TryProcessMessage(
+    int64_t socketId,
+    string &&message,
+    msrn::JSValueObject &params) noexcept /*override*/
+{
+  scoped_lock lock{m_mutex};
+  if (m_socketIds.find(socketId) == m_socketIds.end())
+    return false;
+
+  params[blobKeys.Data] = std::move(message);
+  return true;
+}
+
+bool BlobWebSocketModuleContentHandler::TryProcessMessage(
+    int64_t socketId,
+    vector<uint8_t> &&message,
+    msrn::JSValueObject &params) noexcept /*override*/
+{
+  scoped_lock lock{m_mutex};
+  if (m_socketIds.find(socketId) == m_socketIds.end())
+    return false;
+
+  auto blob = msrn::JSValueObject{
+      {blobKeys.Offset, 0},
+      {blobKeys.Size, message.size()},
+      {blobKeys.BlobId, m_blobPersistor->StoreMessage(std::move(message))}};
+
+  params[blobKeys.Data] = std::move(blob);
+  params[blobKeys.Type] = blobKeys.Blob;
+  return true;
+}
+
 #pragma endregion IWebSocketModuleContentHandler
 
 void BlobWebSocketModuleContentHandler::Register(int64_t socketID) noexcept {

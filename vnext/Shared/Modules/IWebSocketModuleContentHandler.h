@@ -30,6 +30,29 @@ struct IWebSocketModuleContentHandler {
   virtual void ProcessMessage(
       std::vector<uint8_t> &&message,
       winrt::Microsoft::ReactNative::JSValueObject &params) noexcept = 0;
+
+  /// Atomically check Supports() and ProcessMessage() under a single lock hold,
+  /// closing the TOCTOU gap between the two calls.
+  /// Returns true if the message was handled.
+  virtual bool TryProcessMessage(
+      int64_t socketId,
+      std::string &&message,
+      winrt::Microsoft::ReactNative::JSValueObject &params) noexcept {
+    if (!Supports(socketId))
+      return false;
+    ProcessMessage(std::move(message), params);
+    return true;
+  }
+
+  virtual bool TryProcessMessage(
+      int64_t socketId,
+      std::vector<uint8_t> &&message,
+      winrt::Microsoft::ReactNative::JSValueObject &params) noexcept {
+    if (!Supports(socketId))
+      return false;
+    ProcessMessage(std::move(message), params);
+    return true;
+  }
 };
 
 } // namespace Microsoft::React
