@@ -18,6 +18,13 @@ namespace Microsoft::React {
 struct IWebSocketModuleContentHandler {
   virtual ~IWebSocketModuleContentHandler() noexcept {}
 
+  /// Returns true if this handler should process messages for the given socket.
+  /// Default returns true for backward compatibility; BlobModule overrides to
+  /// check whether binaryType='blob' was set for this socket via addWebSocketHandler.
+  virtual bool Supports(int64_t /*socketId*/) noexcept {
+    return true;
+  }
+
   virtual void ProcessMessage(std::string &&message, winrt::Microsoft::ReactNative::JSValueObject &params) noexcept = 0;
 
   virtual void ProcessMessage(

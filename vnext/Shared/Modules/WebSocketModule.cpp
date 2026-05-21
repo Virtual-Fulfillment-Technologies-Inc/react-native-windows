@@ -83,7 +83,7 @@ shared_ptr<IWebSocketResource> WebSocketTurboModule::CreateResource(int64_t id, 
     if (auto prop = propBag.Get(BlobModuleContentHandlerPropertyId()))
       contentHandler = prop.Value().lock();
 
-    if (contentHandler) {
+    if (contentHandler && contentHandler->Supports(id)) {
       if (isBinary) {
         auto buffer = CryptographicBuffer::DecodeFromBase64String(winrt::to_hstring(message));
         winrt::com_array<uint8_t> arr;
