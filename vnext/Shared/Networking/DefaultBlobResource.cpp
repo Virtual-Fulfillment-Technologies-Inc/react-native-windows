@@ -264,9 +264,11 @@ bool BlobWebSocketModuleContentHandler::TryProcessMessage(
     vector<uint8_t> &&message,
     msrn::JSValueObject &params) noexcept /*override*/
 {
-  scoped_lock lock{m_mutex};
-  if (m_socketIds.find(socketId) == m_socketIds.end())
-    return false;
+  {
+    scoped_lock lock{m_mutex};
+    if (m_socketIds.find(socketId) == m_socketIds.end())
+      return false;
+  }
 
   auto blob = msrn::JSValueObject{
       {blobKeys.Offset, 0},
