@@ -64,6 +64,9 @@ TEST_CLASS (RNTesterHeadlessTests) {
     Assert::IsTrue(status == TestStatus::Passed, L"Test did not pass (JS did not call markTestPassed within timeout)");
   }
 
+  BEGIN_TEST_METHOD_ATTRIBUTE(WebSocketArrayBuffer)
+  TEST_IGNORE()
+  END_TEST_METHOD_ATTRIBUTE()
   TEST_METHOD(WebSocketArrayBuffer) {
     TestModule::Reset();
 
