@@ -11,71 +11,177 @@
 /**
  * Yoga layout crash repro (Sentry POS-V2-A0).
  *
- * Reproduces the native `facebook::yoga::Node` crash that occurs when large
- * subtrees mount/unmount rapidly inside a ScrollView (modal step transitions:
- * idle -> processing -> error). Mirrors the scenario worked around in
- * Vendora PR #1719 (avoiding Modal.Body / ScrollView for step content).
+ * Faithful replica of the Vendora POS PaymentProcessingModal scenario that
+ * crashes in `facebook::yoga::Node` on react-native-windows. The app does NOT
+ * use the native <Modal>; it portal-renders content into an absolutely
+ * positioned, height-constrained overlay. The modal body is a ScrollView
+ * (`Modal.Body`) that imperatively calls
+ * `setNativeProps({scrollEnabled, ...})` from inside `onContentSizeChange` /
+ * `onLayout` whenever the content height crosses the container height.
+ *
+ * As the payment step cycles idle -> processing -> error, the body content
+ * alternates between overflowing (tall) and fitting (short), so `scrollEnabled`
+ * flips imperatively on nearly every transition. That imperative native-prop
+ * mutation, racing with the commit that remounts the ScrollView's children, is
+ * the suspected trigger. (PR #1719 worked around it by swapping the ScrollView
+ * body for a plain View.)
  *
  * HOW TO USE
  * 1. Build + run Debug under the Visual Studio debugger:
  *      cd packages/e2e-test-app-fabric && yarn windows
- *    (attach VS so the native Yoga stack is symbolicated when it faults).
+ *    (attach VS so the native Yoga stack is symbolicated when it faults; enable
+ *     Debug > Windows > Exception Settings > Win32 Exceptions > Access violation)
  * 2. Open the "Playground" example.
- * 3. Tap "Open repro modal", then "Start auto-cycle".
- * 4. Watch the iteration counter; note the count if/when it crashes.
+ * 3. Tap "Open repro overlay", then "Start auto-cycle". Watch the iteration
+ *    counter; note the count if/when it crashes.
  *
  * A/B CONTROLS
- * - "Use ScrollView" off swaps the ScrollView for a plain View (the PR #1719
- *   workaround). If the crash stops, the ScrollView is confirmed as the trigger.
- * - "Concurrency stressors" on adds two extra churn sources designed to widen
- *   the layout-race window: an off-cadence content-size tick (adds/removes rows)
- *   and a modal-card resize loop (forces the modal ContentIsland to re-measure
- *   on its own schedule, potentially concurrent with JS-thread commits).
+ * - "Use ScrollView body" off  -> plain View body (PR #1719 workaround).
+ * - "setNativeProps scroll toggle" off -> stops the imperative scrollEnabled
+ *   flips; if this alone stops the crash, the imperative path is the trigger.
+ * - "Concurrency stressors" on -> off-cadence content-size churn + overlay
+ *   resize loop to widen the layout-race window.
  */
 
 import type {RNTesterModuleExample} from '../../types/RNTesterTypes';
 
 import RNTesterText from '../../components/RNTesterText';
 import * as React from 'react';
-import {Modal, Pressable, ScrollView, StyleSheet, View} from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 
-const STEPS: $ReadOnlyArray<string> = [
-  'idle',
-  'processing',
-  'error',
-  'success',
-];
+const STEPS: $ReadOnlyArray<string> = ['idle', 'processing', 'error'];
 
-const STEP_INTERVAL_MS = 150; // how fast step content remounts
+const STEP_INTERVAL_MS = 150; // how fast the payment step (and body) remounts
 const STRESS_TICK_MS = 33; // off-cadence content-size churn
-const STRESS_RESIZE_MS = 80; // off-cadence modal re-measure
-const BASE_NODES = 250; // size of each remounted subtree
+const STRESS_RESIZE_MS = 80; // off-cadence overlay re-measure
 
-function swatchColor(step: string): {backgroundColor: string} {
-  switch (step) {
-    case 'processing':
-      return {backgroundColor: '#f1c40f'};
-    case 'error':
-      return {backgroundColor: '#e74c3c'};
-    case 'success':
-      return {backgroundColor: '#2ecc71'};
-    default:
-      return {backgroundColor: '#3498db'};
+// idle overflows the body (forces scrollEnabled=true), processing is a tiny
+// spinner (scrollEnabled=false), error is medium. Alternating across these
+// makes the imperative setNativeProps toggle fire on nearly every transition.
+const IDLE_ROWS = 40;
+const ERROR_ROWS = 8;
+
+type BodyProps = {
+  children: React.Node,
+  useScrollView: boolean,
+  useSetNativeProps: boolean,
+};
+
+// Faithful replica of Vendora's Modal.Body: a ScrollView that imperatively
+// flips scrollEnabled via setNativeProps based on measured content vs container.
+function ReproBody({
+  children,
+  useScrollView,
+  useSetNativeProps,
+}: BodyProps): React.Node {
+  const svRef = React.useRef<?React.ElementRef<typeof ScrollView>>(null);
+  const containerH = React.useRef(0);
+  const contentH = React.useRef(0);
+  const lastEnabled = React.useRef<?boolean>(null);
+
+  const updateScroll = React.useCallback(() => {
+    if (!useSetNativeProps) {
+      return;
+    }
+    const enabled = contentH.current > containerH.current + 1; // epsilon
+    if (lastEnabled.current === enabled) {
+      return;
+    }
+    lastEnabled.current = enabled;
+    svRef.current?.setNativeProps({
+      scrollEnabled: enabled,
+      showsVerticalScrollIndicator: enabled,
+      bounces: enabled,
+      overScrollMode: enabled ? 'always' : 'never',
+    });
+  }, [useSetNativeProps]);
+
+  const handleLayout = React.useCallback(
+    e => {
+      const h = e.nativeEvent.layout.height;
+      if (h !== containerH.current) {
+        containerH.current = h;
+        updateScroll();
+      }
+    },
+    [updateScroll],
+  );
+
+  const handleContentSizeChange = React.useCallback(
+    (w: number, h: number) => {
+      if (h !== contentH.current) {
+        contentH.current = h;
+        updateScroll();
+      }
+    },
+    [updateScroll],
+  );
+
+  if (!useScrollView) {
+    return (
+      <View style={styles.body} onLayout={handleLayout}>
+        {children}
+      </View>
+    );
   }
+
+  return (
+    <ScrollView
+      ref={svRef}
+      style={styles.body}
+      contentContainerStyle={styles.bodyContent}
+      onLayout={handleLayout}
+      onContentSizeChange={handleContentSizeChange}
+      scrollEnabled={false}
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+      overScrollMode="never"
+      keyboardShouldPersistTaps="handled">
+      {children}
+    </ScrollView>
+  );
 }
 
-// Large subtree so each remount is expensive (widens the layout-race window).
-function BigTree({step, nodes}: {step: string, nodes: number}): React.Node {
+function Rows({prefix, count}: {prefix: string, count: number}): React.Node {
   return (
     <View>
-      {Array.from({length: nodes}).map((_, i) => (
-        <View key={`${step}-${i}`} style={styles.row}>
-          <View style={[styles.swatch, swatchColor(step)]} />
-          <RNTesterText>{`${step} row ${i}`}</RNTesterText>
+      {Array.from({length: count}).map((_, i) => (
+        <View key={`${prefix}-${i}`} style={styles.row}>
+          <View style={styles.swatch} />
+          <RNTesterText>{`${prefix} row ${i}`}</RNTesterText>
         </View>
       ))}
     </View>
   );
+}
+
+function StepContent({
+  step,
+  extraRows,
+}: {
+  step: string,
+  extraRows: number,
+}): React.Node {
+  switch (step) {
+    case 'processing':
+      return (
+        <View style={styles.center}>
+          <ActivityIndicator />
+          <RNTesterText>Communicating with payment processor...</RNTesterText>
+        </View>
+      );
+    case 'error':
+      return <Rows prefix="error" count={ERROR_ROWS + extraRows} />;
+    case 'idle':
+    default:
+      return <Rows prefix="idle" count={IDLE_ROWS + extraRows} />;
+  }
 }
 
 function Playground(): React.Node {
@@ -83,14 +189,14 @@ function Playground(): React.Node {
   const [stepIndex, setStepIndex] = React.useState(0);
   const [auto, setAuto] = React.useState(false);
   const [useScrollView, setUseScrollView] = React.useState(true);
+  const [useSetNativeProps, setUseSetNativeProps] = React.useState(true);
   const [stress, setStress] = React.useState(false);
   const [iterations, setIterations] = React.useState(0);
 
-  // Stressor state.
   const [extraRows, setExtraRows] = React.useState(0);
   const [wide, setWide] = React.useState(false);
 
-  // Auto-cycle steps: rapidly mount/unmount large trees inside the ScrollView.
+  // Cycle the payment step: idle -> processing -> error, remounting the body.
   React.useEffect(() => {
     if (!auto || !open) {
       return;
@@ -102,20 +208,20 @@ function Playground(): React.Node {
     return () => clearInterval(id);
   }, [auto, open]);
 
-  // Stressor 1: off-cadence content-size churn (adds/removes rows) to force
-  // ScrollView content-size recalculation independently of step changes.
+  // Stressor 1: off-cadence content-size churn (forces extra content-size
+  // changes -> extra setNativeProps toggles independent of step changes).
   React.useEffect(() => {
     if (!stress || !auto || !open) {
       return;
     }
     const id = setInterval(() => {
-      setExtraRows(r => (r + 7) % 40);
+      setExtraRows(r => (r + 5) % 30);
     }, STRESS_TICK_MS);
     return () => clearInterval(id);
   }, [stress, auto, open]);
 
-  // Stressor 2: off-cadence modal-card resize to force the modal ContentIsland
-  // to re-measure/arrange on its own schedule (suspected off-JS-thread layout).
+  // Stressor 2: off-cadence overlay resize -> forces the constrained container
+  // to re-measure on its own schedule, potentially concurrent with commits.
   React.useEffect(() => {
     if (!stress || !auto || !open) {
       return;
@@ -127,24 +233,25 @@ function Playground(): React.Node {
   }, [stress, auto, open]);
 
   const step = STEPS[stepIndex];
-  const Body = useScrollView ? ScrollView : View;
-  const nodes = BASE_NODES + (stress ? extraRows : 0);
 
   return (
     <View style={styles.container}>
       <RNTesterText style={styles.heading}>
-        Yoga ScrollView remount crash repro (POS-V2-A0)
+        Yoga ScrollView crash repro (POS-V2-A0 / PaymentProcessingModal)
       </RNTesterText>
       <RNTesterText>
-        {`useScrollView: ${String(useScrollView)}   stressors: ${String(
-          stress,
-        )}   iterations: ${iterations}`}
+        {`scrollView:${String(useScrollView)}  setNativeProps:${String(
+          useSetNativeProps,
+        )}  stress:${String(stress)}  iters:${iterations}`}
       </RNTesterText>
 
+      <Pressable style={styles.btn} onPress={() => setUseScrollView(v => !v)}>
+        <RNTesterText>Toggle ScrollView body vs View (PR #1719 A/B)</RNTesterText>
+      </Pressable>
       <Pressable
         style={styles.btn}
-        onPress={() => setUseScrollView(v => !v)}>
-        <RNTesterText>Toggle ScrollView vs View (A/B PR #1719 workaround)</RNTesterText>
+        onPress={() => setUseSetNativeProps(v => !v)}>
+        <RNTesterText>Toggle setNativeProps scroll toggle</RNTesterText>
       </Pressable>
       <Pressable style={styles.btn} onPress={() => setStress(v => !v)}>
         <RNTesterText>
@@ -157,22 +264,20 @@ function Playground(): React.Node {
           setIterations(0);
           setOpen(true);
         }}>
-        <RNTesterText>Open repro modal</RNTesterText>
+        <RNTesterText>Open repro overlay</RNTesterText>
       </Pressable>
 
-      <Modal
-        visible={open}
-        transparent
-        onRequestClose={() => {
-          setAuto(false);
-          setOpen(false);
-        }}>
-        <View style={styles.backdrop}>
-          <View style={[styles.card, wide ? styles.cardWide : styles.cardNarrow]}>
-            <RNTesterText style={styles.heading}>{`step: ${step}  (nodes: ${nodes})`}</RNTesterText>
-            <Body style={styles.body}>
-              <BigTree step={step} nodes={nodes} />
-            </Body>
+      {/* Portal-style overlay (absolute fill, height-constrained dialog) —
+          mirrors the rn-primitives Portal + max-h-[95%] dialog in Vendora. */}
+      {open ? (
+        <View style={styles.overlay} pointerEvents="box-none">
+          <View style={[styles.dialog, wide ? styles.dialogWide : styles.dialogNarrow]}>
+            <RNTesterText style={styles.heading}>{`step: ${step}`}</RNTesterText>
+            <ReproBody
+              useScrollView={useScrollView}
+              useSetNativeProps={useSetNativeProps}>
+              <StepContent step={step} extraRows={stress ? extraRows : 0} />
+            </ReproBody>
             <View style={styles.footerRow}>
               <Pressable style={styles.btn} onPress={() => setAuto(a => !a)}>
                 <RNTesterText>{auto ? 'Stop auto-cycle' : 'Start auto-cycle'}</RNTesterText>
@@ -196,7 +301,7 @@ function Playground(): React.Node {
             </View>
           </View>
         </View>
-      </Modal>
+      ) : null}
     </View>
   );
 }
@@ -215,28 +320,41 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginVertical: 4,
   },
-  backdrop: {
-    flex: 1,
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: '#00000088',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
-  card: {
+  dialog: {
     backgroundColor: '#16213e',
     borderRadius: 10,
     padding: 12,
-    maxHeight: '80%',
+    // Constrain height so the tall "idle" content overflows the body and the
+    // body's setNativeProps scroll toggle actually fires.
+    maxHeight: '70%',
   },
-  cardNarrow: {
+  dialogNarrow: {
     width: '70%',
   },
-  cardWide: {
+  dialogWide: {
     width: '92%',
   },
   body: {
-    maxHeight: 360,
     marginVertical: 8,
+  },
+  bodyContent: {
+    gap: 8,
+  },
+  center: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 24,
   },
   footerRow: {
     flexDirection: 'row',
@@ -253,6 +371,7 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 3,
+    backgroundColor: '#3498db',
   },
 });
 
