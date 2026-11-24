@@ -331,6 +331,10 @@ void SetBorderLayerPropertiesCommon(
       {(textureRect.right - textureRect.left), (textureRect.bottom - textureRect.top)},
       winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
       winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+  if (!surface) {
+    // The graphics device is lost; the border is drawn again on the next update.
+    return;
+  }
   surface.as(borderTexture);
 
   layer.Brush(surface);

@@ -278,6 +278,10 @@ void ImageComponentView::ensureDrawingSurface() noexcept {
         drawingSurfaceSize,
         winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
         winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+    if (!m_drawingSurface) {
+      // The graphics device is lost; m_drawingSurface stays null so the next update creates it again.
+      return;
+    }
 
     DrawImage();
 
@@ -328,6 +332,10 @@ void ImageComponentView::DrawImage() noexcept {
   // to specify the entire surface, which nullptr is shorthand for (but, as it works out,
   // any time we make an update we touch the entire surface, so we always pass nullptr).
   POINT offset;
+
+  if (!m_drawingSurface) {
+    return;
+  }
 
   if (themeEffectsImage() && theme()->IsEmpty()) {
     return;
